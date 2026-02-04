@@ -1,0 +1,4 @@
+*.sh text eol=lf
+*.R  text eol=lf
+*.bed text eol=lf
+*.txt text eol=lf
