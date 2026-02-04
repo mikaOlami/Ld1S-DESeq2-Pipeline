@@ -45,10 +45,16 @@ suppressMessages(library(ggrepel))
 options(ggrepel.max.overlaps = Inf)
 
 # ---- repo paths for DB ----
-script_dir <- dirname(normalizePath(sys.frame(1)$ofile %||% commandArgs()[1], mustWork = FALSE))
-# fallback: use current file location if available; else use getwd
-if (is.na(script_dir) || script_dir == "") script_dir <- getwd()
-repo_dir <- normalizePath(file.path(script_dir, ".."), mustWork = FALSE)
+cmd_args <- commandArgs(trailingOnly = FALSE)
+file_arg <- cmd_args[grep("^--file=", cmd_args)]
+if (length(file_arg) == 0) {
+  # fallback: assume script is run from repo root
+  script_dir <- getwd()
+} else {
+  script_path <- sub("^--file=", "", file_arg[1])
+  script_dir <- dirname(normalizePath(script_path))
+}
+repo_dir <- normalizePath(file.path(script_dir, ".."))
 
 desc_file <- file.path(repo_dir, "DB", "LD_Id_Description.txt")
 
