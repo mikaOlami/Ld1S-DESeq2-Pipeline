@@ -100,7 +100,7 @@ Outputs:
 ### Notes
 - The DESeq2 script uses only samples listed in `colData.tsv` (commented lines starting with `#` are ignored).
 - Counts columns are automatically reordered to match the sample order in `colData.tsv`.
-- Gene descriptions are added from `DB/LD_Id_Description_2024.txt`.
+- Gene descriptions are added from `DB/LD_Id_Description.txt`.
 
 
 
