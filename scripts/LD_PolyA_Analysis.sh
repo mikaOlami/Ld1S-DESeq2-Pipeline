@@ -4,44 +4,57 @@ set -euo pipefail
 # L. donovani (Ld1S) PolyA RNA-seq mapping pipeline
 # FASTQ/ (paired-end .fastq.gz)  ->  Bams/*.sorted.bam (+ .bai)
 #
-# Repo layout expected:
-#   <repo>/scripts/LD_PolyA_Analysis.sh   (this script)
-#   <repo>/DB/LD_smalt_index.smi/.sma     (SMALT genome index; prefix: DB/LD_smalt_index)
 #
 # Run from a working directory that contains FASTQ/:
 #   bash /path/to/repo/scripts/LD_PolyA_Analysis.sh
 #
-# Optionally override tools/threads:
+# Optional overrides:
 #   threads=16 max_jobs=10 SMALT=smalt SAMTOOLS=samtools bash scripts/LD_PolyA_Analysis.sh
-#
-# Optionally override repo root if auto-detection fails:
 #   REPO_DIR=/path/to/repo bash scripts/LD_PolyA_Analysis.sh
 
 # ---- Config ----
 threads="${threads:-8}"
-max_jobs="${max_jobs:-25}"   # how many samples to process concurrently
+max_jobs="${max_jobs:-25}"
 
-# ---- Resolve repo root (so the script works from any working directory) ----
+# ---- Resolve repo root (works from any working directory) ----
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-"$(cd -- "${SCRIPT_DIR}/.." && pwd)"}"
+DB_DIR="${REPO_DIR}/DB"
 
-# ---- Reference paths inside repo ----
-LD_DB="${REPO_DIR}/DB/LD_smalt_index"   # SMALT index prefix (expects .smi/.sma)
-
-# ---- Tools (assumed to be on PATH unless overridden) ----
+# ---- Tools (assumed on PATH unless overridden) ----
 SMALT="${SMALT:-smalt}"
 SAMTOOLS="${SAMTOOLS:-samtools}"
 
-# ---- Sanity ----
 command -v "$SMALT" >/dev/null 2>&1 || { echo "Error: smalt not found on PATH (or SMALT not set)" >&2; exit 1; }
 command -v "$SAMTOOLS" >/dev/null 2>&1 || { echo "Error: samtools not found on PATH (or SAMTOOLS not set)" >&2; exit 1; }
 
-[[ -f "${LD_DB}.smi" && -f "${LD_DB}.sma" ]] || {
-  echo "Error: SMALT index not found at:" >&2
-  echo "  ${LD_DB}.smi / ${LD_DB}.sma" >&2
-  exit 1
-}
+# ---- Reference FASTA + SMALT index prefix (inside repo DB/) ----
+LD_FASTA="${DB_DIR}/Leishmania_donovani_sudanese.fa"
+LD_DB="${DB_DIR}/LD_smalt_index"   # prefix; expects ${LD_DB}.smi and ${LD_DB}.sma
 
+[[ -d "$DB_DIR" ]] || { echo "Error: DB directory not found: $DB_DIR" >&2; exit 1; }
+[[ -f "$LD_FASTA" ]] || { echo "Error: genome FASTA not found: $LD_FASTA" >&2; exit 1; }
+
+# ---- Build SMALT index if missing ----
+if [[ ! -f "${LD_DB}.smi" || ! -f "${LD_DB}.sma" ]]; then
+  echo "[DB] SMALT index not found. Building it now..."
+
+  # Build inside DB so outputs land in DB/
+  (
+    cd "$DB_DIR"
+    "$SMALT" index -k 11 -s 1 "$(basename "$LD_DB")" "$(basename "$LD_FASTA")"
+  )
+
+  [[ -f "${LD_DB}.smi" && -f "${LD_DB}.sma" ]] || {
+    echo "Error: SMALT index build failed (missing ${LD_DB}.smi/.sma)" >&2
+    exit 1
+  }
+  echo "[DB] SMALT index built successfully."
+else
+  echo "[DB] SMALT index found: ${LD_DB}.smi/.sma"
+fi
+
+# ---- Sanity: working directory must contain FASTQ/ ----
 [[ -d FASTQ ]] || {
   echo -e "Error: FASTQ directory does not exist in the current working directory.\n" \
           "Please create FASTQ/ and place paired-end *.fastq.gz files inside it." >&2
@@ -62,9 +75,10 @@ process_sample() {
   local r1="$1"
   local threads="$2"
 
-  # derive R2 (supports *_R1.fastq.gz and *_R1_001.fastq.gz)
   local r1_base r2_base r2
   r1_base="$(basename "$r1")"
+
+  # derive R2 (supports *_R1.fastq.gz and *_R1_001.fastq.gz)
   r2_base="$(
     echo "$r1_base" | sed -E 's/(.*)_R1(_[0-9]+)?\.fastq\.gz$/\1_R2\2.fastq.gz/'
   )"
@@ -93,7 +107,7 @@ process_sample() {
 
   # --- MAP ---
   if [[ ! -s "$ubam" || "$ubam" -ot "$r1" || "$ubam" -ot "$r2" ]]; then
-    echo "[MAP: Ld PolyA vs genome] $base"
+    echo "[MAP: LD PolyA vs genome] $base"
     "$SMALT" map -n "${threads}" "${LD_DB}" "$r1" "$r2" 2> "$log_map" \
       | "$SAMTOOLS" view -@ "${threads}" -b -f 0x02 -F 4 -o "$ubam_tmp" -
     "$SAMTOOLS" quickcheck -v "$ubam_tmp"
@@ -120,7 +134,6 @@ process_sample() {
   # --- INDEX ---
   if [[ ! -s "$sbai" || "$sbai" -ot "$sbam" ]]; then
     echo "[INDEX] Indexing $base"
-    # Note: -@ may be ignored by older samtools; harmless if unsupported
     "$SAMTOOLS" index -@ "${threads}" "$sbam" 2>> "$log_sort" || "$SAMTOOLS" index "$sbam"
   else
     echo "[INDEX] SKIP (up-to-date) $base"
